@@ -1,4 +1,7 @@
 .python-version
+.DS_Store
+notebooks
+notes
 
 # Temporary and binary files
 *~
