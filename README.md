@@ -11,7 +11,7 @@ Extract cluster and patient info from Los Alamos HIV Database.
 Install in develop mode, directly from GitHub:
 
 ```bash
-pip install --no-deps -e git+https://github.com/sggaffney/alamos-extract.git#egg=hiv-extract
+pip install --no-deps -e git+https://github.com/sggaffney/alamos-extract.git#egg=alamos-extract
 ```
 
 This should put the command line tool 'load_hiv' in your path.
