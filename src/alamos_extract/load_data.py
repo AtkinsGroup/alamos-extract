@@ -201,8 +201,8 @@ class Patient:
         self.accession_list = data['accessions']
         self.clusters = data['clusters']
         self.accession_df = extract_patient_accession_timepoints(patient_id)
-        assert(len(self.accession_list) == len(self.accession_df)), "Basic and extended patient tables have "" \
-        ""different accession counts"
+        assert(len(self.accession_list) == len(self.accession_df)), \
+            "Basic and extended patient tables have different accession counts."
 
 
 def extract_patient_info(patient_id: int):
