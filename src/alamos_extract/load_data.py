@@ -180,9 +180,9 @@ class Cluster:
         acc_list = []
         for patient_id, patient in self.patient_dict.items():
             desc_list.append(patient.desc)
-            acc_df = pd.DataFrame.from_records(patient.accessions, columns=['accession_name', 'accession_id'])
-            acc_df.insert(0, 'patient_id', patient_id)
-            acc_list.append(acc_df)
+            # acc_df = pd.DataFrame.from_records(patient.accession_list, columns=['accession_name', 'accession_id'])
+            # acc_df.insert(0, 'patient_id', patient_id)
+            acc_list.append(patient.accession_df)
         desc_df = pd.concat(desc_list, axis=1)
         # desc_df.index.name = None
         acc_df = pd.concat(acc_list, axis=0, ignore_index=True)
@@ -193,12 +193,14 @@ class Cluster:
 
 class Patient:
     def __init__(self, patient_id, patient_code=None):
+        """Holds various patient attributes including accessions with timepoint information."""
         self.patient_id = patient_id
         self.patient_code = patient_code
         data = extract_patient_info(patient_id)
         self.desc = data['desc']
-        self.accessions = data['accessions']
+        self.accession_list = data['accessions']
         self.clusters = data['clusters']
+        self.accession_df = extract_patient_accession_timepoints(patient_id)
 
 
 def extract_patient_info(patient_id: int):
@@ -244,6 +246,63 @@ def extract_patient_info(patient_id: int):
             'accessions': accessions,
             'clusters': clusters,
             }
+
+
+def extract_patient_accession_timepoints(patient_id: int):
+    """Load large sequence accession table with timepoint information for patient_id."""
+
+    time_url = ("https://www.hiv.lanl.gov/components/sequence/HIV/search/d_search.comp"
+                "?ssam_pat_id={}&ssam_postfirstsample_days=*&ssam_poststarttreatment_days=*"
+                "&ssam_postendtreatment_days=*&ssam_postseroconv_days=*&ssam_postinfect_days=*&ssam_fiebig=*") \
+        .format(patient_id)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        r = requests.get(time_url, verify=False).content
+    soup = bs4.BeautifulSoup(r, features='lxml')
+    links = soup(href=re.compile('patient.comp'))
+    table = links[0].find_parents('table')[0]
+    # Verify that there was only one such table
+    temp = {id(t.find_parent('table')) for t in links}
+    assert (len(temp) == 1), "Multiple table matches with accession links"
+
+    # Read main table
+    df = pd.read_html(str(table))[0]
+    main_cols = [
+        'row_id',
+        'blast',
+        'patient_comb',
+        'accession_id',
+        'seq_name',
+        'subtype',
+        'country',
+        'sampling_year',
+        'days_from_first_sample',
+        'fiebig_stage',
+        'days_from_treatment_end',
+        'days_from_treatment_start',
+        'days_from_infection',
+        'days_from_seroconversion',
+        'genomic_region',
+        'seq_length',
+        'organism',
+    ]
+    df.columns = main_cols
+    assert (''.join(df.iloc[0, :2].values) == '#Select'), 'Expected empty first row in main table'
+    df = df.iloc[1:].copy()
+
+    # Split combined patient identifier column
+    patient_codes, patient_ids = zip(*df.patient_comb.apply(_get_patient_ids))
+    df.insert(2, 'patient_id', patient_ids)
+    df.insert(3, 'patient_code', patient_codes)
+
+    ncbi_links = table(href=re.compile('nuccore'))
+    df['pos'], df['ncbi_url'] = zip(*[_process_ncbi_link(i) for i in ncbi_links])
+
+    blast_urls = pd.Series([i['href'] for i in table.findAll('a', {'href': re.compile('blast')})])
+    ssam_ids = blast_urls.apply(_get_ssam_se_id)
+    df.insert(5, 'blast_ssam_se_id', ssam_ids)
+    df.drop('patient_comb', axis=1, inplace=True)
+    return df
 
 
 def _process_ncbi_link(link):
