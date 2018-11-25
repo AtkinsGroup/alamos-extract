@@ -38,13 +38,6 @@ def load_cluster(cluster_id):
     Returns:
         data (dict): Dictionary of 'cluster name', 'description', 'patients', 'accessions'.
     """
-    cluster_path = 'https://www.hiv.lanl.gov/components/sequence/HIV/search/cluster.comp?clu_id={}'
-
-    # @TODO: find a way to get around "certificate verify failed" error without verify=False
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        c_page = requests.get(cluster_path.format(cluster_id), verify=False).content
-
     cluster_name_str = 'Cluster Name'
     patient_url_format = r"patient.comp\?pat_id=(\d+)"  # includes backslash escape
     genbank_url_format = r"query_one.comp\?se_id=(\d+)"
@@ -55,7 +48,9 @@ def load_cluster(cluster_id):
                 'accessions': 'Accession(s)',
                 }
 
-    soup = bs4.BeautifulSoup(c_page, features="lxml", from_encoding='utf8')
+    cluster_path = 'https://www.hiv.lanl.gov/components/sequence/HIV/search/cluster.comp?clu_id={}'
+    url = cluster_path.format(cluster_id)
+    soup = _get_soup_from_url(url)
     tables = soup('table')
 
     # Get main table
@@ -116,12 +111,9 @@ def search_db(max_rec=100, virus='HIV-1', subtype='A1*', region='GENOME'):
                  'submit': 'Search',
                  'action': 'search',
                  }
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        r = requests.post('https://www.hiv.lanl.gov/components/sequence/HIV/search/search.comp',
-                          data=test_form, verify=False)
-    s = bs4.BeautifulSoup(r.content, 'lxml')
-    links = s(href=re.compile('patient.comp'))
+    url = 'https://www.hiv.lanl.gov/components/sequence/HIV/search/search.comp'
+    soup = _get_soup_from_url(url, data=test_form)
+    links = soup(href=re.compile('patient.comp'))
     table = links[0].find_parents('table')[0]
 
     # Verify that there was only one such table
@@ -212,13 +204,8 @@ def extract_patient_info(patient_id: int):
         data (dict): Dictionary with keys: desc, accessions, clusters
     """
     patient_info_url = "https://www.hiv.lanl.gov/components/sequence/HIV/search/patient.comp?pat_id={}".format(patient_id)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        r = requests.get(patient_info_url, verify=False).content
-
-    soup = bs4.BeautifulSoup(r, features='lxml')
-
-    ptables = pd.read_html(r)
+    soup = _get_soup_from_url(patient_info_url)
+    ptables = pd.read_html(str(soup))
 
     """tables:
         0: tools
@@ -305,6 +292,20 @@ def extract_patient_accession_timepoints(patient_id: int):
     df.insert(5, 'blast_ssam_se_id', ssam_ids)
     df.drop('patient_comb', axis=1, inplace=True)
     return df
+
+
+def _get_soup_from_url(url, data=None):
+    """Get BeautifulSoup object from HIV Database url, using POST request if data supplied."""
+    # @TODO: find a way to get around "certificate verify failed" error without verify=False
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        if data:
+            request = requests.post(url, data=data, verify=False)
+        else:
+            request = requests.get(url, verify=False)
+    content = request.content
+    soup = bs4.BeautifulSoup(content, features="lxml", from_encoding='utf8')
+    return soup
 
 
 def _process_ncbi_link(link):
