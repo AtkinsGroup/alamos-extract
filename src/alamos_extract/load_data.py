@@ -16,6 +16,7 @@ Note on URLs:
 
 import re
 from collections import OrderedDict
+import logging
 import warnings
 
 import bs4
@@ -25,6 +26,8 @@ import pandas as pd
 __author__ = "Stephen Gaffney"
 __copyright__ = "Stephen Gaffney"
 __license__ = "gpl3"
+
+_logger = logging.getLogger(__name__)
 
 
 def load_cluster(cluster_id):
@@ -193,8 +196,21 @@ class Patient:
         self.accession_list = data['accessions']
         self.clusters = data['clusters']
         self.accession_df = extract_patient_accession_timepoints(patient_id)
-        assert(len(self.accession_list) == len(self.accession_df)), \
-            "Basic and extended patient tables have different accession counts."
+        if len(self.accession_list) != len(self.accession_df):
+            values_df = set(self.accession_df.accession_id.values)
+            values_list = set([i[0] for i in self.accession_list])
+            values_df_only = values_df.difference(values_list)
+            values_list_only = values_list.difference(values_df)
+            diff_list = []
+            if values_df_only:
+                diff_list.append('Basic accession listing did not include {}.'.format(','.join(values_df_only)))
+            if values_list_only:
+                diff_list.append('Extended accession listing did not include {}.'.format(','.join(values_list_only)))
+            diff_str = ' '.join(diff_list)
+            _logger.error(("Basic accession listing for patient {p} contains {nb} accessions, while timepoints table "
+                           "lists {ne} accessions. {diffs}")
+                          .format(p=patient_id, nb=len(self.accession_list), ne=len(self.accession_df),
+                                  diffs=diff_str))
 
 
 def extract_patient_info(patient_id: int):
@@ -237,25 +253,22 @@ def extract_patient_info(patient_id: int):
             }
 
 
+def _soup_pager(url):
+    soup = _get_soup_from_url(url)
+    yield soup
+    while _has_next_page_not_final(soup) or _has_next_page_is_final(soup):
+        page_id = _get_results_page_id(soup)
+        soup = _get_soup_from_url(url, data={'action Next.x': 1, 'action Next.y': 1, 'id': page_id})
+        yield soup
+
+
 def extract_patient_accession_timepoints(patient_id: int):
     """Load large sequence accession table with timepoint information for patient_id."""
-
     time_url = ("https://www.hiv.lanl.gov/components/sequence/HIV/search/d_search.comp"
                 "?ssam_pat_id={}&ssam_postfirstsample_days=*&ssam_poststarttreatment_days=*"
                 "&ssam_postendtreatment_days=*&ssam_postseroconv_days=*&ssam_postinfect_days=*&ssam_fiebig=*") \
         .format(patient_id)
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        r = requests.get(time_url, verify=False).content
-    soup = bs4.BeautifulSoup(r, features='lxml')
-    links = soup(href=re.compile('patient.comp'))
-    table = links[0].find_parents('table')[0]
-    # Verify that there was only one such table
-    temp = {id(t.find_parent('table')) for t in links}
-    assert (len(temp) == 1), "Multiple table matches with accession links"
 
-    # Read main table
-    df = pd.read_html(str(table))[0]
     main_cols = [
         'row_id',
         'blast',
@@ -275,21 +288,34 @@ def extract_patient_accession_timepoints(patient_id: int):
         'seq_length',
         'organism',
     ]
-    df.columns = main_cols
-    assert (''.join(df.iloc[0, :2].values) == '#Select'), 'Expected empty first row in main table'
-    df = df.iloc[1:].copy()
 
-    # Split combined patient identifier column
-    patient_codes, patient_ids = zip(*df.patient_comb.apply(_get_patient_ids))
-    df.insert(2, 'patient_id', patient_ids)
-    df.insert(3, 'patient_code', patient_codes)
+    df_list = []
+    for ind, soup in enumerate(_soup_pager(time_url)):
+        if ind:
+            _logger.info("Loading page {} for patient {}".format(ind + 1, patient_id))
+        links = soup(href=re.compile('patient.comp'))
+        table = links[0].find_parents('table')[0]
+        # Verify that there was only one such table
+        temp = {id(t.find_parent('table')) for t in links}
+        assert (len(temp) == 1), "Multiple table matches with accession links"
+        # Read main table
+        df = pd.read_html(str(table))[0]
+        df.columns = main_cols
+        assert (''.join(df.iloc[0, :2].values) == '#Select'), 'Expected empty first row in main table'
+        df = df.iloc[1:].copy()
+        # Split combined patient identifier column
+        patient_codes, patient_ids = zip(*df.patient_comb.apply(_get_patient_ids))
+        df.insert(2, 'patient_id', patient_ids)
+        df.insert(3, 'patient_code', patient_codes)
+        ncbi_links = table(href=re.compile('nuccore'))
+        df['pos'], df['ncbi_url'] = zip(*[_process_ncbi_link(i) for i in ncbi_links])
+        blast_urls = pd.Series([i['href'] for i in table.findAll('a', {'href': re.compile('blast')})])
+        ssam_ids = blast_urls.apply(_get_ssam_se_id)
+        df.insert(5, 'blast_ssam_se_id', ssam_ids)
+        df_list.append(df)
 
-    ncbi_links = table(href=re.compile('nuccore'))
-    df['pos'], df['ncbi_url'] = zip(*[_process_ncbi_link(i) for i in ncbi_links])
-
-    blast_urls = pd.Series([i['href'] for i in table.findAll('a', {'href': re.compile('blast')})])
-    ssam_ids = blast_urls.apply(_get_ssam_se_id)
-    df.insert(5, 'blast_ssam_se_id', ssam_ids)
+    df = pd.concat(df_list, axis=0, ignore_index=True)
+    df = df[main_cols]
     df.drop('patient_comb', axis=1, inplace=True)
     return df
 
@@ -306,6 +332,28 @@ def _get_soup_from_url(url, data=None):
     content = request.content
     soup = bs4.BeautifulSoup(content, features="lxml", from_encoding='utf8')
     return soup
+
+
+def _has_next_page_not_final(soup):
+    """Test for additional results pages, and """
+    input_obj = soup.find('input', title="Next")
+    if input_obj:
+        return True
+    else:
+        return False
+
+
+def _has_next_page_is_final(soup):
+    next_obj = soup.find('input', title="Next")
+    last_obj = soup.find('input', title="Last")
+    if last_obj and not next_obj:
+        return True
+    else:
+        return False
+
+
+def _get_results_page_id(soup):
+    return soup.find('input', attrs={'name': 'id'})['value']
 
 
 def _process_ncbi_link(link):
