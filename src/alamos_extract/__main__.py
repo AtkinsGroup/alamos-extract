@@ -129,7 +129,7 @@ def main(args):
         _logger.debug("Parsing general db search.")
         df = search_db(max_rec=args.maxrows, virus=args.virus, subtype=args.subtype)
         print(df)
-    _logger.info("Script ends here")
+    _logger.info("Script complete.")
 
 
 def run():
