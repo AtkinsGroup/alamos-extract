@@ -314,8 +314,9 @@ def extract_patient_accession_timepoints(patient_id: int):
         df.insert(5, 'blast_ssam_se_id', ssam_ids)
         df_list.append(df)
 
+    final_cols = df_list[0].columns
     df = pd.concat(df_list, axis=0, ignore_index=True)
-    df = df[main_cols]
+    df = df[final_cols]
     df.drop('patient_comb', axis=1, inplace=True)
     return df
 
