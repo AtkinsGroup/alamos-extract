@@ -312,9 +312,13 @@ def _get_df_from_soup(soup, col_headers=None):
     assert (len(temp) == 1), "Multiple table matches with accession links"
     # Read main table
     df = pd.read_html(str(table))[0]
+    # allow for double colspan in 2nd column producing extra parsed column
+    if len(col_headers) == len(df.columns) - 1:
+        col_headers.insert(2, 'blast2')
     df.columns = col_headers
-    assert (''.join(df.iloc[0, :2].values) == '#Select'), 'Expected empty first row in main table'
-    df = df.iloc[1:].copy()
+    # handle case where first row contains headers
+    if ''.join([str(i) for i in df.iloc[0, :2].values]) == '#Select':
+        df = df.iloc[1:].copy()
     # Split combined patient identifier column
     patient_codes, patient_ids = zip(*df.patient_comb.apply(_get_patient_ids))
     df.insert(2, 'patient_id', patient_ids)
