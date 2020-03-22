@@ -114,46 +114,22 @@ def search_db(max_rec=100, virus='HIV-1', subtype='A1*', region='GENOME'):
                  'submit': 'Search',
                  'action': 'search',
                  }
+    main_cols = [
+        'row_id',
+        'blast',
+        'patient_comb',
+        'accession',
+        'seq_name',
+        'subtype',
+        'country',
+        'sampling_year',
+        'genomic_region',
+        'seq_length',
+        'organism',
+    ]
     url = 'https://www.hiv.lanl.gov/components/sequence/HIV/search/search.comp'
     soup = _get_soup_from_url(url, data=test_form)
-    links = soup(href=re.compile('patient.comp'))
-    table = links[0].find_parents('table')[0]
-
-    # Verify that there was only one such table
-    temp = {id(t.find_parent('table')) for t in links}
-    assert(len(temp) == 1), "Multiple table matches with accession links"
-
-    # Read main table
-    df = pd.read_html(str(table))[0]
-    main_cols = [
-                 'row_id',
-                 'blast',
-                 'patient_comb',
-                 'accession',
-                 'seq_name',
-                 'subtype',
-                 'country',
-                 'sampling_year',
-                 'genomic_region',
-                 'seq_length',
-                 'organism',
-                 ]
-    df.columns = main_cols
-    assert(''.join(df.iloc[0, :2].values) == '#Select'), 'Expected empty first row in main table'
-    df = df.iloc[1:].copy()
-
-    # Split combined patient identifier column
-    patient_codes, patient_ids = zip(*df.patient_comb.apply(_get_patient_ids))
-    df.insert(2, 'patient_id', patient_ids)
-    df.insert(3, 'patient_code', patient_codes)
-
-    ncbi_links = table(href=re.compile('nuccore'))
-    df['pos'], df['ncbi_url'] = zip(*[_process_ncbi_link(i) for i in ncbi_links])
-
-    blast_urls = pd.Series([i['href'] for i in table.findAll('a', {'href': re.compile('blast')})])
-    ssam_ids = blast_urls.apply(_get_ssam_se_id)
-    df.insert(5, 'blast_ssam_se_id', ssam_ids)
-
+    df = _get_df_from_soup(soup, col_headers=main_cols)
     return df
 
 
@@ -293,25 +269,7 @@ def extract_patient_accession_timepoints(patient_id: int):
     for ind, soup in enumerate(_soup_pager(time_url)):
         if ind:
             _logger.info("Loading page {} for patient {}".format(ind + 1, patient_id))
-        links = soup(href=re.compile('patient.comp'))
-        table = links[0].find_parents('table')[0]
-        # Verify that there was only one such table
-        temp = {id(t.find_parent('table')) for t in links}
-        assert (len(temp) == 1), "Multiple table matches with accession links"
-        # Read main table
-        df = pd.read_html(str(table))[0]
-        df.columns = main_cols
-        assert (''.join(df.iloc[0, :2].values) == '#Select'), 'Expected empty first row in main table'
-        df = df.iloc[1:].copy()
-        # Split combined patient identifier column
-        patient_codes, patient_ids = zip(*df.patient_comb.apply(_get_patient_ids))
-        df.insert(2, 'patient_id', patient_ids)
-        df.insert(3, 'patient_code', patient_codes)
-        ncbi_links = table(href=re.compile('nuccore'))
-        df['pos'], df['ncbi_url'] = zip(*[_process_ncbi_link(i) for i in ncbi_links])
-        blast_urls = pd.Series([i['href'] for i in table.findAll('a', {'href': re.compile('blast')})])
-        ssam_ids = blast_urls.apply(_get_ssam_se_id)
-        df.insert(5, 'blast_ssam_se_id', ssam_ids)
+        df = _get_df_from_soup(soup, col_headers=main_cols)
         df_list.append(df)
 
     final_cols = df_list[0].columns
@@ -333,6 +291,40 @@ def _get_soup_from_url(url, data=None):
     content = request.content
     soup = bs4.BeautifulSoup(content, features="lxml", from_encoding='utf8')
     return soup
+
+
+def _get_df_from_soup(soup, col_headers=None):
+    """Extract table from html soup and verify no other tables present.
+
+    Args:
+        soup: BeautifulSoup object that includes table.
+        col_headers (list): column headers, for renaming columns (REQUIRED).
+
+    Returns:
+        df (pd.DataFrame): table of parsed data
+    """
+    if not col_headers:
+        raise Exception("Column headers must be specified for table.")
+    links = soup(href=re.compile('patient.comp'))
+    table = links[0].find_parents('table')[0]
+    # Verify that there was only one such table
+    temp = {id(t.find_parent('table')) for t in links}
+    assert (len(temp) == 1), "Multiple table matches with accession links"
+    # Read main table
+    df = pd.read_html(str(table))[0]
+    df.columns = col_headers
+    assert (''.join(df.iloc[0, :2].values) == '#Select'), 'Expected empty first row in main table'
+    df = df.iloc[1:].copy()
+    # Split combined patient identifier column
+    patient_codes, patient_ids = zip(*df.patient_comb.apply(_get_patient_ids))
+    df.insert(2, 'patient_id', patient_ids)
+    df.insert(3, 'patient_code', patient_codes)
+    ncbi_links = table(href=re.compile('nuccore'))
+    df['pos'], df['ncbi_url'] = zip(*[_process_ncbi_link(i) for i in ncbi_links])
+    blast_urls = pd.Series([i['href'] for i in table.findAll('a', {'href': re.compile('blast')})])
+    ssam_ids = blast_urls.apply(_get_ssam_se_id)
+    df.insert(5, 'blast_ssam_se_id', ssam_ids)
+    return df
 
 
 def _has_next_page_not_final(soup):
