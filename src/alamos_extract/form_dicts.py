@@ -1,5 +1,5 @@
 subtype_dict = {
-    "Any subtype": "",
+    "any": "",
     "No subtype": "no_subtype",
     "A": "A* or Astar or A[1-2]",
     "A1": "A1*",
@@ -113,7 +113,7 @@ subtype_dict = {
     }
 
 region_dict = {
-    "Any": "",
+    "any": "",
     "complete genome": "GENOME",
     "5' LTR": "5LTR",
     "5' LTR R": "5LTRR",
@@ -153,7 +153,7 @@ region_dict = {
     }
 
 virus_dict = {
-    "Any": "Any",
+    "any": "Any",
     "HIV-1": "HIV-1",
     "HIV-2": "HIV-2",
     "SIV": "SIV",

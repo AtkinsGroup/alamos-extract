@@ -63,10 +63,12 @@ def parse_args(args):
     )
 
     # max_rec=100, virus='HIV-1', subtype='A1*', region='GENOME'
-    parser_s = subparsers.add_parser('general', help='General search help')
-    parser_s.add_argument('-v', '--virus', nargs=1, default='HIV-1', help='Virus', choices=VIRUS_CHOICES)
-    parser_s.add_argument('-s', '--subtype', nargs=1, default='A1*', help='Subtype', choices=SUBTYPE_CHOICES)
-    parser_s.add_argument('-n', '--maxrows', nargs=1, default='100', help='Max row count')
+    parser_s = subparsers.add_parser('cluster_name', help='Cluster name search')
+    parser_s.add_argument('cluster_name', default=None, help='Cluster name (not integer ID)')
+    parser_s.add_argument('-t', '--virus', nargs='?', default='HIV-1', help='Virus', choices=VIRUS_CHOICES)
+    parser_s.add_argument('-s', '--subtype', nargs='?', default='any', help='Subtype', choices=SUBTYPE_CHOICES)
+    parser_s.add_argument('-r', '--region', nargs='?', default='any', help='Region', choices=REGION_CHOICES)
+    parser_s.add_argument('-m', '--maxrows', nargs='?', default=100, type=int, help='Max row count')
 
     parser.add_argument(
         '-v',
@@ -91,7 +93,7 @@ def setup_logging(loglevel):
     Args:
       loglevel (int): minimum loglevel for emitting messages
     """
-    logformat = "[%(asctime)s] %(levelname)s:%(name)s:%(message)s"
+    logformat = "[%(asctime)s] %(message)s"
     logging.basicConfig(level=loglevel, stream=sys.stdout,
                         format=logformat, datefmt="%Y-%m-%d %H:%M:%S")
 
@@ -125,10 +127,23 @@ def main(args):
         print('{} accessions.'.format(n_accessions))
         print('Clinical data written to {}'.format(path_clinical))
         print('Accession data written to {}'.format(path_accession))
-    elif args.subparser == 'general':
-        _logger.debug("Parsing general db search.")
-        df = search_db(max_rec=args.maxrows, virus=args.virus, subtype=args.subtype)
-        print(df)
+
+    elif args.subparser == 'cluster_name':
+        cluster_name = args.cluster_name
+        virus = virus_dict[args.virus]
+        subtype = subtype_dict[args.subtype]
+        df = search_db(max_rec=args.maxrows, virus=virus,
+                       subtype=subtype, cluster_name=args.cluster_name,
+                       region=None)
+        df.drop(['blast', 'blast2'], axis=1, inplace=True)
+        clusters = list(df['cluster_comb'].unique())
+        n_clusters = len(clusters)
+        if n_clusters == 1:
+            clusters = clusters[0]
+        _logger.info("%d clusters identified: %s", n_clusters, clusters)
+        tsv_path = f'cluster_{cluster_name}_info.tsv'
+        df.to_csv(tsv_path, sep='\t', index=False)
+        _logger.info(f"Cluster sequence metadata saved to {tsv_path}.")
     _logger.info("Script complete.")
 
 

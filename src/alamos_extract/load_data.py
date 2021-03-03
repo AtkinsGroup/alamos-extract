@@ -96,7 +96,8 @@ def load_cluster(cluster_id):
     return data
 
 
-def search_db(max_rec=100, virus='HIV-1', subtype='A1*', region='GENOME'):
+def search_db(max_rec=100, virus='HIV-1', subtype='A1*', region='GENOME',
+              cluster_name=None):
     """Builds dataframe of Sequence DB records for given field selections.
 
     Returns:
@@ -113,6 +114,7 @@ def search_db(max_rec=100, virus='HIV-1', subtype='A1*', region='GENOME'):
                  'master': virus,
                  'submit': 'Search',
                  'action': 'search',
+                 'sample_year_exact': '1',
                  }
     main_cols = [
         'row_id',
@@ -128,8 +130,19 @@ def search_db(max_rec=100, virus='HIV-1', subtype='A1*', region='GENOME'):
         'organism',
     ]
     url = 'https://www.hiv.lanl.gov/components/sequence/HIV/search/search.comp'
-    soup = _get_soup_from_url(url, data=test_form)
-    df = _get_df_from_soup(soup, col_headers=main_cols)
+    if cluster_name is not None:
+        test_form.update({'value cluster clu_name 1': cluster_name})
+        main_cols.insert(2, 'blast2')
+        main_cols.insert(9, 'cluster_comb')
+        df_list = []
+        for ind, soup in enumerate(_soup_pager(url, data=test_form)):
+            _logger.info("Loading page %d for cluster %s", ind + 1, cluster_name)
+            temp = _get_df_from_soup(soup, col_headers=main_cols)
+            df_list.append(temp)
+        df = pd.concat(df_list, axis=0, ignore_index=True)
+    else:
+        soup = _get_soup_from_url(url, data=test_form)
+        df = _get_df_from_soup(soup, col_headers=main_cols)
     return df
 
 
@@ -229,12 +242,15 @@ def extract_patient_info(patient_id: int):
             }
 
 
-def _soup_pager(url):
-    soup = _get_soup_from_url(url)
+def _soup_pager(url, data=None):
+    kwargs = {} if data is None else {'data': data}
+    soup = _get_soup_from_url(url, **kwargs)
     yield soup
     while _has_next_page_not_final(soup) or _has_next_page_is_final(soup):
         page_id = _get_results_page_id(soup)
-        soup = _get_soup_from_url(url, data={'action Next.x': 1, 'action Next.y': 1, 'id': page_id})
+        new_data = {} if data is None else data.copy()
+        new_data.update({'action Next.x': 1, 'action Next.y': 1, 'id': page_id})
+        soup = _get_soup_from_url(url, data=new_data)
         yield soup
 
 
